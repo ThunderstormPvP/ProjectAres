@@ -1,8 +1,8 @@
 package tc.oc.api.minecraft.users;
 
+import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
-import java.util.UUID;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -31,39 +31,47 @@ import tc.oc.api.users.UserService;
 import tc.oc.api.users.UserUpdateResponse;
 import tc.oc.api.util.UUIDs;
 import tc.oc.commons.core.concurrent.FutureUtils;
-import tc.oc.minecraft.api.entity.OfflinePlayer;
 import tc.oc.minecraft.api.server.LocalServer;
+import tc.oc.minecraft.api.user.UserFactory;
+import tc.oc.minecraft.api.user.UserFinder;
 
 @Singleton
 public class LocalUserService extends NullModelService<User, UserDoc.Partial> implements UserService {
 
     @Inject private LocalServer minecraftServer;
     @Inject private LocalSessionFactory sessionFactory;
+    @Inject private UserFinder userFinder;
+    @Inject private UserFactory userFactory;
 
     @Override
     public ListenableFuture<User> find(UserId userId) {
-        return Futures.immediateFuture(new LocalUserDocument(minecraftServer.getOfflinePlayer(UUIDs.parse(userId.player_id()))));
+        return FutureUtils.mapSync(
+            userFinder.findUserAsync(UUIDs.parse(userId.player_id())),
+            user -> {
+                if(user.lastKnownName().isPresent()) {
+                    return new LocalUserDocument(user);
+                }
+                throw new NotFound("No user with UUID " + userId.player_id());
+            }
+        );
     }
 
     @Override
     public ListenableFuture<UserSearchResponse> search(UserSearchRequest request) {
-        for(OfflinePlayer player : minecraftServer.getSavedPlayers()) {
-            if(player.getLastKnownName()
-                     .filter(name -> name.equalsIgnoreCase(request.username))
-                     .isPresent()) {
-                return Futures.immediateFuture(new UserSearchResponse(new LocalUserDocument(player),
-                                                                      player.isOnline(),
-                                                                      false,
-                                                                      null,
-                                                                      null));
+        return FutureUtils.mapSync(
+            userFinder.findUserAsync(request.username),
+            user -> {
+                if(user.lastKnownName().isPresent()) {
+                    return new UserSearchResponse(new LocalUserDocument(user), user.isOnline(), false, null, null);
+                }
+                throw new NotFound("No user named '" + request.username + "'");
             }
-        }
-        return Futures.immediateFailedFuture(new NotFound("No user named '" + request.username + "'", null));
+        );
     }
 
     @Override
     public ListenableFuture<LoginResponse> login(LoginRequest request) {
-        final User user = new LocalUserDocument(minecraftServer.getOfflinePlayer(request.uuid));
+        final User user = new LocalUserDocument(userFactory.createUser(request.uuid, request.username, Instant.now()));
         final Session session = request.start_session ? sessionFactory.newSession(user, request.ip)
                                                       : null;
 

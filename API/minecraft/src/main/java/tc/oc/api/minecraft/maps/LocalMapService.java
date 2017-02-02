@@ -2,7 +2,6 @@ package tc.oc.api.minecraft.maps;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.stream.Stream;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
@@ -13,16 +12,22 @@ import tc.oc.api.docs.virtual.MapDoc;
 import tc.oc.api.maps.MapRatingsRequest;
 import tc.oc.api.maps.MapRatingsResponse;
 import tc.oc.api.maps.MapService;
-import tc.oc.api.maps.MapUpdateMultiResponse;
+import tc.oc.api.maps.UpdateMapsAndLookupAuthorsResponse;
+import tc.oc.api.message.types.UpdateMultiResponse;
 import tc.oc.api.minecraft.users.UserStore;
 import tc.oc.api.model.NullModelService;
+import tc.oc.api.users.UserService;
+import tc.oc.api.util.UUIDs;
 import tc.oc.commons.core.stream.Collectors;
 import tc.oc.minecraft.api.entity.Player;
+import tc.oc.minecraft.api.user.UserFinder;
 
 @Singleton
 public class LocalMapService extends NullModelService<MapDoc, MapDoc> implements MapService {
 
     @Inject private UserStore<Player> userStore;
+    @Inject private UserService userService;
+    @Inject private UserFinder userFinder;
 
     @Override
     public ListenableFuture<?> rate(MapRating rating) {
@@ -35,14 +40,13 @@ public class LocalMapService extends NullModelService<MapDoc, MapDoc> implements
     }
 
     @Override
-    public ListenableFuture<MapUpdateMultiResponse> updateMapsAndLookupAuthors(Collection<? extends MapDoc> maps) {
-        return Futures.immediateFuture(new MapUpdateMultiResponse(
+    public UpdateMapsAndLookupAuthorsResponse updateMapsAndLookupAuthors(Collection<? extends MapDoc> maps) {
+        return new UpdateMapsAndLookupAuthorsResponse(
+            Futures.immediateFuture(UpdateMultiResponse.EMPTY),
             maps.stream()
-                .flatMap(map -> Stream.concat(map.author_uuids().stream(),
-                                              map.contributor_uuids().stream()))
-                .collect(Collectors.mappingTo(uuid -> userStore.byUuid(uuid)
-                                                               .flatMap(userStore::user)
-                                                               .orElse(null)))
-        ));
+                .flatMap(MapDoc::authorAndContributorUuids)
+                .distinct()
+                .collect(Collectors.mappingTo(uuid -> (ListenableFuture) userService.find(() -> UUIDs.normalize(uuid))))
+        );
     }
 }
